@@ -1,0 +1,32 @@
+@startuml
+package "Cliente" {
+  [Aplicación Cliente / Postman]
+}
+
+package "API Flask" {
+  [ProductosService]
+  [RecetasService]
+  [ListasService]
+  [Repositorio (SQLAlchemy)]
+}
+
+package "Infraestructura" {
+}
+
+[DockerCompose] as "Docker Compose"
+[APIFlask] as "API Flask"
+
+[PostgreSQL] as DB
+
+Cliente --> ProductosService : REST (JSON/HTTP)
+Cliente --> RecetasService : REST (JSON/HTTP)
+Cliente --> ListasService : REST (JSON/HTTP)
+
+ProductosService --> Repositorio
+RecetasService --> Repositorio
+ListasService --> Repositorio
+
+Repositorio --> DB : SQL (transacciones ACID)
+DockerCompose ..> APIFlask : Orquestación
+DockerCompose ..> DB : Orquestación
+@enduml
