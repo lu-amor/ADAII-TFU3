@@ -1,77 +1,254 @@
-# UT3 - TFU - Resolución Parte 1
+# Architecture and Design Decisions - Comprehensive Demo
 
-## Modelo de componentes
+## Overview
 
-En la siguiente figura se representa el modelo de componentes del sistema en notación UML, incluyendo los componentes principales, las interfaces expuestas y consumidas, así como las dependencias establecidas entre ellos.
+This document explains the architectural decisions and design patterns implemented in the comprehensive architecture demo, showcasing components, interfaces, scalability, containers, ACID transactions, and stateless services.
 
-![uml_components_diagram.png](out/uml_components_diagram.png)
+## 🏗️ Architecture Patterns Implemented
 
-### Descripción de las interfaces
+### 1. Component-Based Architecture
 
-En relación con las interfaces del sistema, puede observarse que la API Flask constituye el punto de entrada principal para los clientes externos. A través de esta capa se exponen distintas interfaces de tipo REST, estructuradas en torno a los recursos fundamentales del dominio: `/productos`, `/recetas` y `/listas`. Cada una de estas rutas permite realizar operaciones mediante solicitudes HTTP en formato JSON, lo cual facilita la interoperabilidad con aplicaciones cliente de distinto tipo, ya sea un cliente ligero de pruebas como Postman o un futuro frontend web o móvil.
+**Pattern**: Microservices with clear service boundaries
+**Implementation**:
+- **Products Service** (`/api/routes/productos.py`): Manages product lifecycle with CRUD operations
+- **Recipes Service** (`/api/routes/recetas.py`): Handles recipe creation and ingredient relationships  
+- **Lists Service** (`/api/routes/listas.py`): Manages shopping lists and product associations
 
-Ahora bien, los servicios de dominio que conforman la API no interactúan directamente con la base de datos, sino que lo hacen mediante la interfaz proporcionada por el repositorio implementado con SQLAlchemy. Esta capa de persistencia ofrece operaciones de tipo CRUD y, además, brinda soporte a transacciones que garantizan propiedades ACID, como ocurre en la creación de una receta con múltiples productos asociados. De este modo, se asegura una clara separación entre la lógica de negocio y el acceso a los datos.
+**Component Interface Design**:
+```python
+# Products Component Interface
+GET    /productos/           → List all products (stateless)
+POST   /productos/           → Create new product (ACID transaction)
+GET    /productos/{id}       → Get specific product (stateless)
 
-A su vez, el DBMS PostgreSQL expone su propia interfaz a través del protocolo SQL estándar, disponible en el puerto 5432. Es precisamente esta interfaz la que consume el repositorio para ejecutar las instrucciones de inserción, consulta o eliminación, bajo las garantías propias de un gestor de base de datos transaccional.
+# Recipes Component Interface  
+GET    /recetas/             → List all recipes (stateless)
+POST   /recetas/             → Create recipe with ingredients (ACID transaction)
 
-Finalmente, la capa de infraestructura, gestionada mediante Docker Compose, incorpora su propia interfaz de orquestación. A través de ella es posible desplegar los contenedores que alojan tanto la API como la base de datos, definir sus dependencias y establecer la red que posibilita la comunicación entre servicios. Gracias a esta interfaz declarativa, la solución puede iniciarse, detenerse o escalarse con comandos simples, garantizando así portabilidad y facilidad de despliegue en distintos entornos.
+# Lists Component Interface
+GET    /listas/              → List all shopping lists (stateless)
+POST   /listas/              → Create new shopping list (ACID transaction)
+POST   /listas/{id}/productos → Add products to list (ACID transaction)
+```
 
-## Partición
+**Benefits Demonstrated**:
+- Loose coupling between service components
+- Independent development and testing capability
+- Clear separation of business concerns
+- Interface-based communication contracts
 
-Se optó por una partición por dominio como criterio de primer nivel, lo cual es coherente con los principios de *Domain Driven Design* (Evans, 2004) y con las ventajas mencionadas en la unidad.
+### 2. Container Architecture
 
-- Los componentes de alto nivel (Productos, Recetas, Listas) reflejan directamente conceptos del dominio, facilitando la comprensión del sistema.
-- El modelado por dominio se alinea con arquitecturas modulares y con estilos orientados a microservicios, lo que habilita la evolución futura de la solución.
-- Se favorece la cohesión dentro de cada componente y se minimiza el acoplamiento global, ya que la interacción se produce únicamente a través de interfaces bien definidas.
+**Pattern**: Multi-container deployment with orchestration
+**Implementation**:
 
-En contraste, una partición técnica hubiera organizado los componentes en torno a capas genéricas (presentación, lógica, persistencia), pero con mayor acoplamiento a nivel de datos y menor cercanía con el negocio, lo cual no resulta óptimo para este caso.
+```yaml
+# Database Container
+db:
+  image: postgres:15
+  container_name: recetas_db
+  networks: [recetas_network]
+  volumes: [db_data:/var/lib/postgresql/data]
 
-## Proceso de hallazgo de los componentes
+# API Container (scalable)
+api:
+  build: ./api
+  ports: ["8000-8010:8000"]  # Port range for scaling
+  networks: [recetas_network]
+  healthcheck:
+    test: ["CMD", "curl", "-f", "http://localhost:8000/"]
+    interval: 30s
+```
 
-El proceso de identificación de componentes siguió el ciclo recomendado en el material del curso.
+**Container Benefits**:
+- Service isolation and independence
+- Consistent deployment environments
+- Easy horizontal scaling (`docker-compose up --scale api=3`)
+- Development/production environment parity
 
-En primer lugar, el proceso de hallazgo de los componentes comenzó con una etapa de identificación inicial, en la que se partió de los elementos más representativos del dominio del problema. A partir de los requerimientos planteados por la aplicación —un recetario digital que permite gestionar productos, crear recetas y armar listas de compras— se identificaron como candidatos naturales los componentes Productos, Recetas y Listas. Estos conceptos constituyen la base del negocio y, por lo tanto, resultaron adecuados para ser tratados como unidades de software independientes.
+### 3. Horizontal and Vertical Scalability
 
-Posteriormente, se procedió a un análisis de roles y responsabilidades. En esta instancia, cada componente fue delimitado en función de las operaciones que debía soportar. Por ejemplo, el componente *Recetas* no se limita a almacenar información estática, sino que tiene la responsabilidad de permitir la creación de nuevas recetas, asociar los productos que las integran y garantizar que estas operaciones se realicen de manera transaccional. De forma análoga, el componente *Productos* se ocupa de administrar el catálogo de insumos disponibles, posibilitando tanto su alta y baja como su consulta. En el caso de *Listas*, la responsabilidad recae en permitir la agrupación de productos en listas de compras semanales o temáticas, lo cual constituye una funcionalidad diferenciada dentro del dominio.
+**Horizontal Scaling Implementation**:
+```bash
+# Scale API instances horizontally
+docker-compose up -d --scale api=3 --no-recreate
 
-Una vez definidos los roles básicos, se llevó a cabo un análisis de atributos de calidad. Este análisis buscó determinar en qué medida los componentes respondían a los requerimientos no funcionales planteados en la unidad. Se priorizó, en primer lugar, la consistencia de los datos, garantizada a través del uso de transacciones ACID en la base de datos PostgreSQL. Asimismo, se buscó favorecer la mantenibilidad, asegurando que cada componente tuviera responsabilidades claras y no superpuestas. Finalmente, se tuvo en cuenta la escalabilidad, especialmente en lo que refiere a la API expuesta por Flask, que al ser *stateless* puede replicarse fácilmente en múltiples instancias de contenedor sin que se vea comprometido el estado de la aplicación.
+# Multiple instances handling requests independently
+Container: recetas_api_1 (port 8000)
+Container: recetas_api_2 (port 8001) 
+Container: recetas_api_3 (port 8002)
+```
 
-Finalmente, se realizó un proceso de reestructuración destinado a evitar el anti-patrón conocido como *entity trap*. En lugar de diseñar los componentes exclusivamente en función de las tablas de la base de datos, se priorizó la identificación de servicios con responsabilidades de negocio claramente definidas. Así, por ejemplo, no se creó un componente aislado para la tabla intermedia `receta_producto`, sino que se entendió que dicha funcionalidad forma parte del comportamiento del componente Recetas. Esta decisión permitió mantener la cohesión y garantizar que el modelo de componentes refleje fielmente las operaciones del negocio, en lugar de replicar de manera mecánica la estructura de persistencia.
+**Scalability Features Demonstrated**:
+- Stateless API design enables scaling
+- Shared database across all API instances
+- No server affinity requirements
+- Load distribution capabilities
 
-Como técnicas auxiliares se aplicó la combinación de actor/acción  -identificando operaciones de los usuarios-  y workflow -modelando el flujo de creación de recetas-, en coherencia con los métodos propuestos en la bibliografía de la unidad.
+### 4. ACID Transaction Management
 
-## Impacto del uso de VM en la solución
+**Pattern**: Database transactions with rollback capabilities
+**Implementation**:
 
-En la implementación se eligió el uso de contenedores Docker para desplegar tanto la API como la base de datos.
+```python
+# ACID Transaction Example - Recipe Creation
+@recetas_bp.route("/", methods=["POST"])
+def crear_receta():
+    try:
+        with db.session.begin():  # Start ACID transaction
+            # Atomicity: All operations succeed or all fail
+            receta = Receta(nombre=data["nombre"])
+            db.session.add(receta)
+            db.session.flush()  # Get ID within transaction
+            
+            # Consistency: Maintain data integrity
+            for pid in data.get("productos", []):
+                producto = Producto.query.get(pid)
+                if producto:
+                    receta.productos.append(producto)
+            
+            # Isolation: Concurrent transactions don't interfere
+            db.session.commit()  # Durability: Changes persist
+            
+    except Exception as e:
+        db.session.rollback()  # Automatic rollback on failure
+        return jsonify({"error": f"Transaction failed: {str(e)}"}), 400
+```
 
-### Justificación de la elección
+**ACID Properties Demonstrated**:
+- **Atomicity**: Complete success or complete rollback
+- **Consistency**: Database constraints maintained
+- **Isolation**: Concurrent user support
+- **Durability**: PostgreSQL persistent storage
 
-- Mayor ligereza y rapidez de arranque, al compartir el kernel con el sistema operativo anfitrión.
-- Mejor portabilidad, dado que las imágenes pueden replicarse en distintos entornos sin modificaciones.
-- Facilidad para el escalado horizontal, permitiendo ejecutar múltiples instancias de la API con un simple comando (`--scale`).
-- Adecuados para escenarios de desarrollo académico y proyectos modulares
+### 5. Stateless Service Design
 
-### Impacto de utilizar VMs
+**Pattern**: No server-side session state
+**Implementation**:
 
-- Mayor consumo de recursos a raíz de que cada VM requiere un sistema operativo completo.
-- Tiempos de inicio más largos y mayor complejidad en la configuración.
-- Dificultades adicionales en la portabilidad y gestión de imágenes, lo cual ralentizaría los ciclos de prueba y despliegue.
-- Como ventaja, las VMs ofrecerían mayor aislamiento y seguridad, lo que podría ser beneficioso en entornos críticos, aunque con un costo operativo considerable. En nuestro caso …
+```python
+# Stateless Request Processing
+@productos_bp.route("/", methods=["GET"])
+def listar_productos():
+    """Each request processed independently"""
+    productos = Producto.query.all()
+    return jsonify({
+        "productos": [{"id": p.id, "nombre": p.nombre} for p in productos],
+        "total": len(productos),
+        "operation": "stateless_query"  # No session state
+    })
+```
 
-## Impacto del uso de BASE en la solución
+**Stateless Characteristics**:
+- Each request contains all necessary information
+- No user sessions stored on server
+- Any API instance can handle any request  
+- Database provides all persistent state
 
-La solución implementada se basa en el modelo ACID, dado que la aplicación de recetas requiere garantizar la consistencia y validez de los datos en todo momento.
+## 📊 Architecture Benefits Demonstrated
 
-### Justificación de la elección
+### 1. Components and Interfaces
+```
+┌─────────────────────────────────────────────────────────────┐
+│                     CLIENT APPLICATIONS                     │
+├─────────────────────────────────────────────────────────────┤
+│  curl, Postman, web browsers, mobile apps                  │
+└─────────────────┬───────────────────────────────────────────┘
+                  │ HTTP/JSON REST API
+                  │
+┌─────────────────▼───────────────────────────────────────────┐
+│                   API GATEWAY LAYER                         │
+├─────────────────────────────────────────────────────────────┤
+│  Flask Application (app.py) - Stateless Processing         │
+└─────────────────┬───────────────────────────────────────────┘
+                  │
+    ┌─────────────┼─────────────┐
+    │             │             │
+┌───▼──────┐ ┌───▼──────┐ ┌───▼──────┐
+│Products  │ │Recipes   │ │Lists     │
+│Component │ │Component │ │Component │
+│          │ │          │ │          │
+│Blueprint │ │Blueprint │ │Blueprint │
+└───┬──────┘ └───┬──────┘ └───┬──────┘
+    │            │            │
+    └────────────┼────────────┘
+                 │ SQLAlchemy ORM
+                 │
+┌────────────────▼────────────────────────────────────────────┐
+│              DATABASE LAYER (PostgreSQL)                   │
+├─────────────────────────────────────────────────────────────┤
+│  ACID Transactions, Relational Integrity, Persistence      │
+└─────────────────────────────────────────────────────────────┘
+```
 
-- Atomicidad: la creación de una receta implica registrar tanto la receta como sus productos asociados, operación que debe realizarse de forma indivisible.
-- Consistencia: se asegura que la base de datos siempre se mantenga en un estado válido, respetando las restricciones de integridad.
-- Aislamiento: múltiples usuarios pueden operar simultáneamente sin interferir entre sí.
-- Durabilidad: los cambios confirmados persisten aun ante fallos del sistema.
+### 2. Scalability Benefits
+- **Load Distribution**: Multiple API instances handle concurrent requests
+- **Fault Tolerance**: If one instance fails, others continue serving
+- **Resource Efficiency**: Scale only the components that need it
+- **Performance**: Parallel request processing capabilities
 
-### Impacto de utilizar BASE
+### 3. Container Benefits  
+- **Isolation**: Services run in separate containers
+- **Portability**: Consistent deployment across environments
+- **Scaling**: Easy horizontal scaling with Docker Compose
+- **Maintenance**: Independent service updates and rollbacks
 
-- Se obtendría alta disponibilidad y tolerancia a particiones, pero sacrificando consistencia fuerte.
-- Podrían generarse ventanas de inconsistencia, donde una receta aparezca creada sin todos sus productos.
-- Sería necesario diseñar mecanismos adicionales - por ejemplo, compensaciones o reconciliaciones - para mantener la lógica de negocio.
-- La complejidad del sistema aumentaría innecesariamente para un proyecto de las características del recetario académico.
+### 4. Transaction Benefits
+- **Data Integrity**: Complex operations complete atomically
+- **Error Recovery**: Automatic rollback on failures
+- **Concurrent Access**: Multiple users can operate simultaneously
+- **Consistency**: Database constraints always maintained
+
+### 5. Stateless Benefits
+- **Scalability**: No server affinity requirements
+- **Reliability**: No session state to lose
+- **Load Balancing**: Any instance can handle any request
+- **Simplicity**: No complex session management needed
+
+## 🎯 Demo Validation
+
+The comprehensive demo validates each architectural concept:
+
+1. **Component Testing**: Individual API endpoint validation
+2. **Interface Verification**: REST API contract compliance  
+3. **Container Demonstration**: Multi-container deployment
+4. **Scaling Validation**: Horizontal instance scaling
+5. **Transaction Testing**: ACID property verification
+6. **Stateless Validation**: Independent request processing
+7. **Performance Assessment**: Concurrent request handling
+
+## 🔧 Technology Choices
+
+| Component | Technology | Architectural Benefit |
+|-----------|------------|---------------------|
+| API Framework | Flask | Lightweight, microservice-friendly |
+| Database | PostgreSQL 15 | Full ACID compliance, reliability |
+| ORM | SQLAlchemy | Transaction management, abstraction |
+| Containerization | Docker | Service isolation, scaling |
+| Orchestration | Docker Compose | Multi-container management |
+| Architecture | REST + Microservices | Component separation, interfaces |
+
+## 🚀 Deployment and Operations
+
+### Setup Process
+```bash
+# 1. Environment setup
+./demos/demo_setup.sh
+
+# 2. Comprehensive architecture demo
+./demos/demo_comprehensive.sh
+
+# 3. Cleanup
+./demos/demo_cleanup.sh
+```
+
+### Scaling Operations
+```bash
+# Scale API horizontally
+docker-compose up -d --scale api=3
+
+# Monitor scaled instances
+docker-compose ps
+```
+
+This architecture demonstrates production-ready patterns for modern web applications with clear separation of concerns, scalability, reliability, and maintainability.

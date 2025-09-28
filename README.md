@@ -1,239 +1,141 @@
-# Scripts de Demostración de la API Flask
+# Comprehensive Architecture Demo
 
-Este directorio contiene scripts de demostración completos para mostrar la funcionalidad de la API Flask.
+This project demonstrates key software architecture concepts through a practical Flask API implementation.
 
-## Scripts de Demostración Disponibles
+## 🎯 Architecture Concepts Demonstrated
 
-### 🚀 `demo_setup.sh`
-**Script de configuración e inicialización**
-- Construye y levanta los contenedores Docker
-- Espera a que los servicios estén listos
-- Realiza chequeos de salud
-- **¡Ejecuta este primero!**
+### 🏗️ **Components and Interfaces**
+- **Microservices Architecture**: Separate service components for products, recipes, and shopping lists
+- **REST API Interfaces**: Well-defined HTTP endpoints with JSON contracts
+- **Service Separation**: Clear boundaries between business logic components
+- **Interface Documentation**: Detailed API contracts and data models
 
-```bash
-./demos/demo_setup.sh
-```
+### � **Containers**
+- **Docker Containerization**: PostgreSQL database and Flask API in separate containers
+- **Container Orchestration**: Docker Compose for multi-container deployment
+- **Service Discovery**: Internal container networking and communication
+- **Environment Configuration**: Container-specific environment variables
 
-### 🎯 `demo_basic.sh`
-**Demostración de funcionalidad básica**
-- Crea productos de ejemplo
-- Demuestra la creación de recetas
-- Muestra la funcionalidad de listas de compras
-- Perfecto para usuarios primerizos
+### ⚡ **Scalability**
+- **Horizontal Scaling**: Multiple API instance deployment capability
+- **Stateless Design**: No server-side session state for better scalability
+- **Database Connection Pooling**: Efficient resource utilization
+- **Performance Testing**: Concurrent request handling validation
 
-```bash
-./demos/demo_basic.sh
-```
+### 🔒 **ACID Transactions**
+- **Atomicity**: All-or-nothing transaction execution
+- **Consistency**: Database constraint enforcement
+- **Isolation**: Concurrent transaction handling
+- **Durability**: Persistent data storage with rollback capability
 
-### 🚀 `demo_advanced.sh`
-**Escenarios avanzados y casos límite**
-- Creación de una base de datos de recetas compleja
-- Múltiples listas de compras temáticas
-- Demostraciones de manejo de errores
-- Pruebas de restricciones de base de datos
-- **La demo más completa**
+### 🌐 **Stateless Services**
+- **No Session State**: Each request processed independently
+- **Horizontal Scaling Ready**: No server affinity requirements
+- **Load Balancer Friendly**: Requests can be distributed to any instance
+- **Independent Request Processing**: No memory of previous client interactions
 
-```bash
-./demos/demo_advanced.sh
-```
+## 🚀 Quick Start
 
-### 🎮 `demo_interactive.sh`
-**Demostración guiada interactiva**
-- Recorrido paso a paso
-- Sugerencias para pruebas manuales
-- Perfecto para aprender la API
-- Incluye ejemplos de comandos curl
-
-```bash
-./demos/demo_interactive.sh
-```
-
-### 🧪 `demo_test_suite.sh`
-**Pruebas completas de la API**
-- Pruebas sistemáticas de endpoints
-- Validación de casos límite
-- Verificación de rendimiento
-- Genera reportes de prueba detallados
-- **Úsalo para aseguramiento de calidad**
-
-```bash
-./demos/demo_test_suite.sh
-```
-
-### 🔥 `demo_load_test.sh`
-**Pruebas de rendimiento y carga**
-- Simulación de usuarios concurrentes
-- Recolección de métricas de rendimiento
-- Capacidades de pruebas de estrés
-- Análisis de tiempos de respuesta
-
-```bash
-./demos/demo_load_test.sh
-```
-
-### 🧹 `demo_cleanup.sh`
-**Limpieza del entorno**
-- Detiene los contenedores Docker
-- Elimina archivos temporales
-- Limpieza opcional de base de datos/imágenes
-- **Ejecuta al finalizar**
-
-```bash
-./demos/demo_cleanup.sh
-```
-
-## Inicio Rápido
-
-1. **Configura el entorno:**
+1. **Setup Environment:**
    ```bash
-   chmod +x *.sh
+   chmod +x demos/*.sh
    ./demos/demo_setup.sh
    ```
 
-2. **Ejecuta una demo básica:**
+2. **Run Comprehensive Demo:**
    ```bash
-   ./demos/demo_basic.sh
+   ./demos/demo_comprehensive.sh
    ```
 
-3. **Limpia al terminar:**
+3. **Cleanup:**
    ```bash
    ./demos/demo_cleanup.sh
    ```
 
-## Endpoints de la API Demostrados
+## 📊 API Endpoints
 
-| Método | Endpoint | Descripción |
-|--------|----------|-------------|
-| GET | `/` | Chequeo de salud de la API |
-| GET | `/productos` | Listar todos los productos |
-| POST | `/productos` | Crear nuevo producto |
-| POST | `/recetas` | Crear nueva receta |
-| GET | `/listas` | Listar todas las listas de compras |
-| POST | `/listas` | Crear nueva lista de compras |
-| POST | `/listas/{id}/productos` | Agregar productos a la lista* |
+| Method | Endpoint | Description | Architecture Concept |
+|--------|----------|-------------|---------------------|
+| GET | `/` | Health check | Stateless service |
+| GET | `/productos/` | List all products | Component interface |
+| POST | `/productos/` | Create product | ACID transaction |
+| GET | `/productos/{id}` | Get specific product | Stateless operation |
+| GET | `/recetas/` | List all recipes | Component interface |
+| POST | `/recetas/` | Create recipe | ACID transaction |
+| GET | `/listas/` | List shopping lists | Component interface |
+| POST | `/listas/` | Create shopping list | ACID transaction |
+| POST | `/listas/{id}/productos` | Add products to list | ACID transaction |
 
-*Nota: Algunos endpoints pueden requerir completarse en el código fuente.
+## 🔧 Technology Stack
 
-## Escenarios de Demostración Cubiertos
+- **Backend**: Flask (Python)
+- **Database**: PostgreSQL 15
+- **ORM**: SQLAlchemy
+- **Containerization**: Docker & Docker Compose
+- **API**: REST with JSON
+- **Architecture**: Microservices, Stateless
 
-### Operaciones Básicas
-- ✅ Operaciones CRUD de productos
-- ✅ Creación de recetas con ingredientes
-- ✅ Gestión de listas de compras
-- ✅ Recuperación y listado de datos
+## 📋 Data Models
 
-### Funcionalidades Avanzadas
-- ✅ Operaciones masivas de datos
-- ✅ Relaciones complejas de recetas
-- ✅ Listas de compras temáticas
-- ✅ Manejo de transacciones en base de datos
+```python
+# Core entities with relationships
+Producto: {id, nombre}
+Receta: {id, nombre, productos[]}  
+Lista: {id, nombre, productos[]}
 
-### Manejo de Errores
-- ✅ Validación de datos duplicados
-- ✅ Manejo de entradas inválidas
-- ✅ Escenarios de datos faltantes
-- ✅ Solicitudes JSON malformadas
-
-### Pruebas de Rendimiento
-- ✅ Simulación de usuarios concurrentes
-- ✅ Medición de tiempos de respuesta
-- ✅ Escenarios de pruebas de carga
-- ✅ Rendimiento de la base de datos bajo estrés
-
-## Requisitos
-
-- Docker y Docker Compose
-- Herramienta de línea de comandos `curl`
-- `jq` para formateo de JSON (opcional pero recomendado)
-- `bc` para cálculos (para pruebas de carga)
-
-## Resolución de Problemas
-
-### La API no responde
-```bash
-# Verifica si los contenedores están en ejecución
-docker-compose ps
-
-# Revisa los logs de la API
-docker-compose logs api
-
-# Revisa los logs de la base de datos
-docker-compose logs db
+# Many-to-many relationships
+receta_producto: {receta_id, producto_id}
+lista_producto: {lista_id, producto_id}
 ```
 
-### Problemas de permisos
-```bash
-# Haz ejecutables los scripts
-chmod +x *.sh
-```
+## 🧪 Demo Features
 
-### Conflictos de puertos
-Si los puertos 8000 o 5432 ya están en uso, modifica `docker-compose.yaml`:
-```yaml
-ports:
-  - "8001:8000"  # Cambia el puerto externo
-  - "5433:5432"  # Cambia el puerto externo
-```
+### Component Testing
+- Individual service component validation
+- Interface contract verification
+- API endpoint functionality testing
 
-## Notas de Desarrollo
+### Container Demonstration
+- Multi-container deployment
+- Service networking
+- Container scaling capabilities
 
-### Funcionalidades Incompletas Encontradas
-Durante la creación de las demos, se detectaron estas áreas a revisar:
+### ACID Transaction Testing
+- Successful transaction completion
+- Transaction rollback scenarios
+- Data consistency validation
 
-1. **Endpoint incompleto en `listas.py`:**
-   ```python
-   # La línea termina abruptamente en la función agregar_productos
-   db.s  # Debería ser db.session.commit()
-   ```
+### Stateless Service Validation
+- Independent request processing
+- No server-side session state
+- Horizontal scaling preparation
 
-2. **Endpoints faltantes:**
-   - GET `/productos/{id}` - Obtener un producto
-   - GET `/recetas/{id}` - Obtener una receta
-   - GET `/listas/{id}` - Obtener una lista
-   - Endpoints DELETE para limpieza
-   - Endpoints PUT para actualizaciones
+### Performance Assessment
+- Concurrent request handling
+- Multiple instance scaling
+- Load distribution testing
 
-3. **Mejoras sugeridas:**
-   - Validación de entradas
-   - Estandarización de mensajes de error
-   - Paginación para grandes volúmenes de datos
-   - Autenticación/autorización
-   - Registro de solicitudes
+## 🛠️ Requirements
 
-## Contribuciones
+- Docker and Docker Compose
+- `curl` command-line tool
+- `jq` for JSON formatting (recommended)
 
-Para agregar nuevos escenarios de demo:
+## 🔍 Monitoring
 
-1. Crea un nuevo archivo de script: `demos/demo_tu_escenario.sh`
-2. Sigue el patrón de los scripts existentes
-3. Agrega documentación en este README
-4. Prueba exhaustivamente con el test suite
+The demo includes built-in monitoring for:
+- Container health status
+- API response times
+- Transaction success/failure rates
+- Concurrent request handling
+- Database connection status
 
-## Arquitectura
+## 🎓 Learning Objectives
 
-El entorno de demostración consiste en:
-- **Base de datos PostgreSQL** (puerto 5432)
-- **Servidor API Flask** (puerto 8000)
-- **Orquestación con Docker Compose**
-- **Múltiples scripts de demo** para diferentes escenarios
+After running this demo, you will understand:
 
-```
-┌─────────────────┐    ┌─────────────────┐
-│  Scripts Demo   │───▶│    API Flask    │
-│                 │    │   (puerto 8000) │
-└─────────────────┘    └─────────┬───────┘
-                                 │
-                       ┌─────────▼───────┐
-                       │   PostgreSQL    │
-                       │   (puerto 5432) │
-                       └─────────────────┘
-```
-
-## Notas de Seguridad
-
-⚠️ **Este es un entorno de desarrollo/demostración:**
-- No se implementa autenticación
-- Las credenciales de la base de datos están en texto plano
-- La API acepta todas las solicitudes sin validación
-- **NO usar en producción sin endurecimiento de seguridad**
+1. **Component-Based Architecture**: How to structure applications using loosely coupled components
+2. **Container Deployment**: Benefits and practices of containerized applications
+3. **Database Transactions**: ACID properties implementation and transaction management  
+4. **Stateless Design**: Principles and benefits of stateless service architecture
+5. **Horizontal Scaling**: Strategies for scaling applications across multiple instances

@@ -10,12 +10,14 @@ services:
       - "5432:5432"
     volumes:
       - db_data:/var/lib/postgresql/data
+    networks:
+      - recetas_network
 
   api:
     build: ./api
-    container_name: recetas_api
+    # Remove container_name to allow scaling
     ports:
-      - "8000:8000"
+      - "8000-8010:8000"  # Port range for multiple instances
     environment:
       DB_HOST: db
       DB_USER: user
@@ -23,6 +25,18 @@ services:
       DB_NAME: recetas
     depends_on:
       - db
+    networks:
+      - recetas_network
+    # Add health check
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
 volumes:
   db_data:
+
+networks:
+  recetas_network:
+    driver: bridge
