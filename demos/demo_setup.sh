@@ -21,28 +21,49 @@ docker compose up -d --build
 
 # Wait for services to be ready
 echo "⏳ Waiting for services to be ready..."
-sleep 15
 
-# Check if API is responding
-echo "🔍 Checking API health..."
-# Get the actual port that Docker assigned to the API (gateway service)
-API_PORT=$(docker compose port gateway 8000 2>/dev/null | cut -d: -f2)
-if [ -z "$API_PORT" ]; then
-    API_PORT="8000"
+# Helper: check URL with timeout
+check_url() {
+    local url="$1"
+    local attempts=20
+    local i=0
+    while [ $i -lt $attempts ]; do
+        if curl -sSf "$url" > /dev/null 2>&1; then
+            return 0
+        fi
+        i=$((i+1))
+        sleep 2
+    done
+    return 1
+}
+
+# Prefer gateway if present, else check individual services
+API_PORT=$(docker compose port gateway 8000 2>/dev/null | cut -d: -f2 || true)
+if [ -n "$API_PORT" ]; then
+    API_URL="http://localhost:$API_PORT/"
+    echo "Checking gateway at $API_URL"
+    if check_url "$API_URL"; then
+        echo "✅ Gateway is ready at $API_URL"
+    else
+        echo "⚠️  Gateway not reachable at $API_URL"
+    fi
+else
+    echo "Gateway not exposed on host; checking services directly"
 fi
 
-echo "API running on port: $API_PORT"
-until curl -f http://localhost:$API_PORT/ > /dev/null 2>&1; do
-    echo "Waiting for API to be ready..."
-    sleep 5
+# Check per-service endpoints as fallback
+for svc_port in 8001 8002 8003; do
+    svc_url="http://localhost:$svc_port/"
+    echo -n "Checking service on $svc_url ... "
+    if check_url "$svc_url"; then
+        echo "OK"
+    else
+        echo "no response"
+    fi
 done
 
-echo "✅ Demo environment is ready!"
-echo "📍 API running at: http://localhost:8000"
-echo "📍 Database running at: localhost:5432"
-echo ""
-echo "🎯 Run './demo_comprehensive.sh' for the complete architecture demo"
-echo "🧹 Run './demo_cleanup.sh' when finished"
+echo "✅ Demo environment checks completed"
+echo "Run './demo_comprehensive.sh' to demonstrate deployment and SOAP flows"
 
 echo ""
 echo "🧩 Quick microservice notes"

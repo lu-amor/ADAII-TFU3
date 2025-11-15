@@ -14,12 +14,15 @@ PURPLE='\033[0;35m'
 CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
-# Detect the actual API port (gateway service)
-API_PORT=$(docker compose port gateway 8000 2>/dev/null | cut -d: -f2)
-if [ -z "$API_PORT" ]; then
-    API_PORT="8000"
+# Detect the actual API port (gateway service) if present
+API_PORT=$(docker compose port gateway 8000 2>/dev/null | cut -d: -f2 || true)
+if [ -n "$API_PORT" ]; then
+    BASE_URL="http://localhost:$API_PORT"
+    USE_GATEWAY=true
+else
+    BASE_URL=""
+    USE_GATEWAY=false
 fi
-BASE_URL="http://localhost:$API_PORT"
 
 # Helper functions
 print_header() {
@@ -50,23 +53,38 @@ print_error() {
 
 # Check if API is responsive
 check_api() {
-    local max_attempts=30
+    local max_attempts=20
     local attempt=1
-    
-    print_info "Waiting for API to be ready at $BASE_URL..."
-    
-    while [ $attempt -le $max_attempts ]; do
-        if curl -s "$BASE_URL" > /dev/null 2>&1; then
-            print_success "API is ready at $BASE_URL!"
-            return 0
-        fi
-        
-        echo -n "."
-        sleep 2
-        attempt=$((attempt + 1))
+
+    if [ "$USE_GATEWAY" = true ] && [ -n "$BASE_URL" ]; then
+        print_info "Waiting for gateway to be ready at $BASE_URL..."
+        while [ $attempt -le $max_attempts ]; do
+            if curl -s "$BASE_URL" > /dev/null 2>&1; then
+                print_success "Gateway is ready at $BASE_URL!"
+                return 0
+            fi
+            echo -n "."
+            sleep 2
+            attempt=$((attempt + 1))
+        done
+        print_warning "Gateway not available after $max_attempts attempts; falling back to direct services"
+    fi
+
+    # Fallback: ensure at least one service endpoint is available (productos, recetas or listas)
+    for port in 8001 8002 8003; do
+        local url="http://localhost:$port/"
+        attempt=1
+        while [ $attempt -le $max_attempts ]; do
+            if curl -s "$url" > /dev/null 2>&1; then
+                print_success "Service available at $url"
+                return 0
+            fi
+            sleep 2
+            attempt=$((attempt + 1))
+        done
     done
-    
-    print_error "API failed to start after $max_attempts attempts"
+
+    print_error "No services became available after $max_attempts attempts"
     return 1
 }
 
@@ -76,21 +94,38 @@ api_request() {
     local endpoint="$2"
     local data="$3"
     local description="$4"
-    
+
     echo -e "${CYAN}$description${NC}"
-    echo -e "${YELLOW}$method $BASE_URL$endpoint${NC}"
-    
+
+    # If gateway is available use it, else call service directly based on endpoint prefix
+    if [ "$USE_GATEWAY" = true ] && [ -n "$BASE_URL" ]; then
+        local url="$BASE_URL$endpoint"
+    else
+        # Map endpoint to service port
+        if [[ "$endpoint" == /productos* ]]; then
+            url="http://localhost:8001$endpoint"
+        elif [[ "$endpoint" == /recetas* ]]; then
+            url="http://localhost:8002$endpoint"
+        elif [[ "$endpoint" == /listas* ]]; then
+            url="http://localhost:8003$endpoint"
+        else
+            url="http://localhost:8000$endpoint"
+        fi
+    fi
+
+    echo -e "${YELLOW}$method $url${NC}"
+
     if [ -n "$data" ]; then
         echo -e "${YELLOW}Data: $data${NC}"
-        response=$(curl -s -X "$method" -H "Content-Type: application/json" -d "$data" "$BASE_URL$endpoint")
+        response=$(curl -s -X "$method" -H "Content-Type: application/json" -d "$data" "$url")
     else
-        response=$(curl -s -X "$method" "$BASE_URL$endpoint")
+        response=$(curl -s -X "$method" "$url")
     fi
-    
+
     echo -e "${GREEN}Response:${NC}"
     echo "$response" | jq . 2>/dev/null || echo "$response"
     echo ""
-    
+
     return 0
 }
 
@@ -175,15 +210,19 @@ demonstrate_microservice_deployment() {
 demonstrate_soap_xml() {
         print_section "SOAP / XML Endpoint Demonstration"
 
-        # Ensure gateway port resolved
-        API_PORT=$(docker compose port gateway 8000 2>/dev/null | cut -d: -f2)
-        if [ -z "$API_PORT" ]; then
-                API_PORT=8000
+        # Determine whether to use the gateway or call recetas service directly
+        if [ "$USE_GATEWAY" = true ] && [ -n "$BASE_URL" ]; then
+            GATEWAY_URL="$BASE_URL/soap/recetas"
+        else
+            GATEWAY_URL=""
         fi
-        GATEWAY_URL="http://localhost:$API_PORT/soap/recetas"
         RECETAS_URL="http://localhost:8002/soap/recetas"
 
-        print_info "Posting a SOAP CreateReceta to the gateway: $GATEWAY_URL"
+        if [ -n "$GATEWAY_URL" ]; then
+            print_info "Posting a SOAP CreateReceta to the gateway: $GATEWAY_URL"
+        else
+            print_info "Gateway not available; will post directly to recetas service: $RECETAS_URL"
+        fi
         cat > /tmp/demo_soap.xml <<'EOF'
 <?xml version="1.0" encoding="utf-8"?>
 <soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
@@ -199,11 +238,13 @@ demonstrate_soap_xml() {
 </soap:Envelope>
 EOF
 
-        response=$(curl -s -X POST -H "Content-Type: text/xml" --data-binary @/tmp/demo_soap.xml "$GATEWAY_URL")
-        echo "Response from gateway SOAP endpoint:" 
-        echo "$response" | xmllint --format - 2>/dev/null || echo "$response"
+        if [ -n "$GATEWAY_URL" ]; then
+            response=$(curl -s -X POST -H "Content-Type: text/xml" --data-binary @/tmp/demo_soap.xml "$GATEWAY_URL")
+            echo "Response from gateway SOAP endpoint:" 
+            echo "$response" | xmllint --format - 2>/dev/null || echo "$response"
+        fi
 
-        print_info "Posting the same SOAP payload directly to recetas service (if service-level endpoint available): $RECETAS_URL"
+        print_info "Posting the same SOAP payload directly to recetas service: $RECETAS_URL"
         response2=$(curl -s -X POST -H "Content-Type: text/xml" --data-binary @/tmp/demo_soap.xml "$RECETAS_URL")
         echo "Response from recetas service SOAP endpoint:" 
         echo "$response2" | xmllint --format - 2>/dev/null || echo "$response2"
