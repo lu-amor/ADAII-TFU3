@@ -1,42 +1,104 @@
+version: '3.8'
+
 services:
-  db:
+  db_productos:
     image: postgres:15
-    container_name: recetas_db
     environment:
       POSTGRES_USER: user
       POSTGRES_PASSWORD: pass
-      POSTGRES_DB: recetas
-    ports:
-      - "5432:5432"
+      POSTGRES_DB: productos_db
     volumes:
-      - db_data:/var/lib/postgresql/data
+      - db_productos_data:/var/lib/postgresql/data
     networks:
-      - recetas_network
+      - app_network
 
-  api:
-    build: ./api
-    # Remove container_name to allow scaling
-    ports:
-      - "8000-8010:8000"  # Port range for multiple instances
+  db_recetas:
+    image: postgres:15
     environment:
-      DB_HOST: db
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: pass
+      POSTGRES_DB: recetas_db
+    volumes:
+      - db_recetas_data:/var/lib/postgresql/data
+    networks:
+      - app_network
+
+  db_listas:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: pass
+      POSTGRES_DB: listas_db
+    volumes:
+      - db_listas_data:/var/lib/postgresql/data
+    networks:
+      - app_network
+
+  productos:
+    build: ./services/productos
+    ports:
+      - "8001:8001"
+    environment:
+      DB_HOST: db_productos
       DB_USER: user
       DB_PASSWORD: pass
-      DB_NAME: recetas
+      DB_NAME: productos_db
+      DB_PORT: 5432
     depends_on:
-      - db
+      - db_productos
     networks:
-      - recetas_network
-    # Add health check
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
+      - app_network
+
+  recetas:
+    build: ./services/recetas
+    ports:
+      - "8002:8002"
+    environment:
+      DB_HOST: db_recetas
+      DB_USER: user
+      DB_PASSWORD: pass
+      DB_NAME: recetas_db
+      DB_PORT: 5432
+      PRODUCTOS_URL: http://productos:8001
+    depends_on:
+      - db_recetas
+      - productos
+    networks:
+      - app_network
+
+  listas:
+    build: ./services/listas
+    ports:
+      - "8003:8003"
+    environment:
+      DB_HOST: db_listas
+      DB_USER: user
+      DB_PASSWORD: pass
+      DB_NAME: listas_db
+      DB_PORT: 5432
+      PRODUCTOS_URL: http://productos:8001
+    depends_on:
+      - db_listas
+      - productos
+    networks:
+      - app_network
+
+  gateway:
+    build: ./api
+    ports:
+      - "8000:8000"
+    depends_on:
+      - productos
+      - recetas
+      - listas
+    networks:
+      - app_network
 
 volumes:
-  db_data:
+  db_productos_data:
+  db_recetas_data:
+  db_listas_data:
 
 networks:
-  recetas_network:
+  app_network:
     driver: bridge

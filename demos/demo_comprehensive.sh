@@ -14,8 +14,8 @@ PURPLE='\033[0;35m'
 CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
-# Detect the actual API port
-API_PORT=$(docker-compose port api 8000 2>/dev/null | cut -d: -f2)
+# Detect the actual API port (gateway service)
+API_PORT=$(docker compose port gateway 8000 2>/dev/null | cut -d: -f2)
 if [ -z "$API_PORT" ]; then
     API_PORT="8000"
 fi
@@ -102,13 +102,14 @@ demonstrate_acid_transaction() {
     api_request "POST" "/productos/" '{"nombre": "Transactional Tomato"}' "Create product 1"
     api_request "POST" "/productos/" '{"nombre": "Transactional Onion"}' "Create product 2"
     api_request "POST" "/productos/" '{"nombre": "Transactional Garlic"}' "Create product 3"
-    
+
     print_info "Demonstrating successful ACID transaction (recipe creation)..."
-    api_request "POST" "/recetas/" '{"nombre": "ACID Recipe", "productos": [1, 2, 3]}' "Create recipe with valid products (ACID success)"
-    
+    # New recipes accept product NAMES. Use the names created above.
+    api_request "POST" "/recetas/" '{"nombre": "ACID Recipe", "productos": ["Transactional Tomato", "Transactional Onion", "Transactional Garlic"]}' "Create recipe with valid products (ACID success)"
+
     print_info "Demonstrating transaction rollback scenario..."
-    print_warning "Note: The following request may succeed or fail depending on database constraints"
-    api_request "POST" "/recetas/" '{"nombre": "", "productos": [999, 1000]}' "Attempt recipe with invalid data (should rollback)"
+    print_warning "Note: The following request should fail due to missing recipe name and trigger rollback"
+    api_request "POST" "/recetas/" '{"nombre": "", "productos": ["NoSuchProduct"]}' "Attempt recipe with invalid data (should rollback)"
     
     print_success "ACID transaction demonstration completed!"
 }
@@ -136,10 +137,10 @@ demonstrate_horizontal_scaling() {
     print_section "Horizontal Scaling Demonstration"
     
     print_info "Current container status:"
-    docker-compose ps
+    docker compose ps
     
-    print_info "Scaling API service to 3 instances (horizontal scaling)..."
-    docker-compose up -d --scale api=3 --no-recreate
+    print_info "Scaling gateway service to 3 instances (horizontal scaling)..."
+    docker compose up -d --scale gateway=3 --no-recreate
     
     sleep 5
     
@@ -150,6 +151,67 @@ demonstrate_horizontal_scaling() {
     print_warning "Note: Load balancing would require additional configuration (nginx, etc.)"
 }
 
+# Demonstrate deploying single microservices and the XML/SOAP endpoint
+demonstrate_microservice_deployment() {
+        print_section "Microservice Deployment Demonstration"
+
+        print_info "Start only the productos service to show independent deployability"
+        docker compose up -d --no-deps --build productos
+        sleep 3
+        print_info "Productos available at: http://localhost:8001"
+
+        print_info "Start recetas service (depends on productos for product validation)"
+        docker compose up -d --no-deps --build recetas
+        sleep 3
+        print_info "Recetas available at: http://localhost:8002 (also exposes /soap/recetas if enabled)"
+
+        print_info "You can stop a single service without touching others:"
+        echo "  docker compose stop productos"
+
+        print_success "Microservice deployment demo completed (brought up productos + recetas)."
+}
+
+# Demonstrate SOAP/XML endpoint usage (gateway and direct service)
+demonstrate_soap_xml() {
+        print_section "SOAP / XML Endpoint Demonstration"
+
+        # Ensure gateway port resolved
+        API_PORT=$(docker compose port gateway 8000 2>/dev/null | cut -d: -f2)
+        if [ -z "$API_PORT" ]; then
+                API_PORT=8000
+        fi
+        GATEWAY_URL="http://localhost:$API_PORT/soap/recetas"
+        RECETAS_URL="http://localhost:8002/soap/recetas"
+
+        print_info "Posting a SOAP CreateReceta to the gateway: $GATEWAY_URL"
+        cat > /tmp/demo_soap.xml <<'EOF'
+<?xml version="1.0" encoding="utf-8"?>
+<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
+    <soap:Body>
+        <CreateReceta>
+            <nombre>Demo SOAP Recipe</nombre>
+            <productos>
+                <nombre>Manzana</nombre>
+                <nombre>Harina</nombre>
+            </productos>
+        </CreateReceta>
+    </soap:Body>
+</soap:Envelope>
+EOF
+
+        response=$(curl -s -X POST -H "Content-Type: text/xml" --data-binary @/tmp/demo_soap.xml "$GATEWAY_URL")
+        echo "Response from gateway SOAP endpoint:" 
+        echo "$response" | xmllint --format - 2>/dev/null || echo "$response"
+
+        print_info "Posting the same SOAP payload directly to recetas service (if service-level endpoint available): $RECETAS_URL"
+        response2=$(curl -s -X POST -H "Content-Type: text/xml" --data-binary @/tmp/demo_soap.xml "$RECETAS_URL")
+        echo "Response from recetas service SOAP endpoint:" 
+        echo "$response2" | xmllint --format - 2>/dev/null || echo "$response2"
+
+        rm -f /tmp/demo_soap.xml
+        print_success "SOAP/XML demonstration completed."
+}
+
 # Demonstrate container architecture
 demonstrate_containers() {
     print_section "Container Architecture Demonstration"
@@ -158,13 +220,18 @@ demonstrate_containers() {
     echo ""
     
     print_info "Database Container (PostgreSQL):"
-    docker inspect recetas_db --format='{{.Config.Image}}' | xargs -I {} echo "  Image: {}"
-    docker inspect recetas_db --format='{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' | xargs -I {} echo "  IP Address: {}"
-    docker inspect recetas_db --format='{{.Config.ExposedPorts}}' | xargs -I {} echo "  Exposed Ports: {}"
+    DB_CID=$(docker compose ps -q db_recetas)
+    if [ -n "$DB_CID" ]; then
+        docker inspect "$DB_CID" --format='{{.Config.Image}}' | xargs -I {} echo "  Image: {}"
+        docker inspect "$DB_CID" --format='{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' | xargs -I {} echo "  IP Address: {}"
+        docker inspect "$DB_CID" --format='{{.Config.ExposedPorts}}' | xargs -I {} echo "  Exposed Ports: {}"
+    else
+        print_warning "db_recetas container not found via docker compose"
+    fi
     
     echo ""
-    print_info "API Containers:"
-    docker ps --filter "name=recetas_api" --format "table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}"
+    print_info "API / Gateway containers (compose):"
+    docker compose ps
     
     echo ""
     print_info "Container Networks:"
@@ -251,18 +318,20 @@ EOF
     echo ""
     print_info "🧪 Testing Products Service Interface"
     api_request "GET" "/productos/" "" "List products interface"
-    api_request "POST" "/productos/" '{"nombre": "Interface Test Product"}' "Create product interface"
+    api_request "POST" "/productos/" '{"nombre": "Interface Test Product A"}' "Create product interface A"
+    api_request "POST" "/productos/" '{"nombre": "Interface Test Product B"}' "Create product interface B"
     
     # Test Recipes Service Interface  
     echo ""
     print_info "🧪 Testing Recipes Service Interface"
-    api_request "POST" "/recetas/" '{"nombre": "Interface Test Recipe", "productos": [1, 2]}' "Create recipe interface"
+    # Create recipe using product NAMES (new behaviour)
+    api_request "POST" "/recetas/" '{"nombre": "Interface Test Recipe", "productos": ["Interface Test Product A", "Interface Test Product B"]}' "Create recipe interface"
     
     # Test Lists Service Interface
     echo ""
     print_info "🧪 Testing Lists Service Interface" 
     api_request "GET" "/listas/" "" "List shopping lists interface"
-    api_request "POST" "/listas/" '{"nombre": "Interface Test List", "productos": [1]}' "Create list interface"
+    api_request "POST" "/listas/" '{"nombre": "Interface Test List", "productos": ["Interface Test Product A"]}' "Create list interface"
     
     print_success "All component interfaces tested successfully!"
 }
@@ -308,33 +377,17 @@ main() {
         exit 1
     fi
     
-    # 1. Components and Interfaces
-    demonstrate_components_interfaces
-    
-    # 2. Container Architecture
-    demonstrate_containers
-    
-    # 3. ACID Transactions
-    demonstrate_acid_transaction
-    
-    # 4. Stateless Services
-    demonstrate_stateless_service
-    
-    # 5. Horizontal Scaling
-    demonstrate_horizontal_scaling
-    
-    # 6. Performance Testing
-    demonstrate_performance
+    # 1. Facilidad de despliegue: show per-service deployment
+    demonstrate_microservice_deployment
+
+    # 2. SOAP / XML endpoint demonstration (gateway + direct service)
+    demonstrate_soap_xml
     
     # Final Summary
     print_header "📊 DEMO SUMMARY"
     
-    echo -e "${GREEN}✅ Components & Interfaces:${NC} Microservices with REST API contracts"
-    echo -e "${GREEN}✅ Containers:${NC} PostgreSQL + Flask services in Docker"  
-    echo -e "${GREEN}✅ ACID Transactions:${NC} Database consistency with rollback capability"
-    echo -e "${GREEN}✅ Stateless Services:${NC} No server-side session state maintained"
-    echo -e "${GREEN}✅ Horizontal Scalability:${NC} Multiple API instances demonstrated"
-    echo -e "${GREEN}✅ Performance Testing:${NC} Concurrent request handling verified"
+    echo -e "${GREEN}✅ Facilidad de despliegue:${NC} Start/stop individual microservices with Docker Compose"
+    echo -e "${GREEN}✅ SOAP/XML endpoint:${NC} Gateway + service-level SOAP demo completed"
     
     echo ""
     print_info "Architecture benefits demonstrated:"
