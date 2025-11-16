@@ -2,11 +2,6 @@
 # availability_check.sh
 # Non-destructive demo script to show fault-isolation/availability difference
 # between monolith (main) and microservices (tfu5).
-# It will NOT edit existing project files. It will:
-#  - git checkout the requested branch (ensure working tree is clean)
-#  - bring up docker compose
-#  - run a set of curl checks before/after stopping a target service
-#  - save a short report in demos/results/
 
 set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
@@ -16,9 +11,6 @@ usage(){
 Usage: $0 <branch> <target_service>
 
 Examples:
-  # Monolith: stop the api to see global outage
-  $0 main api
-
   # Microservices: stop the productos service and observe partial availability
   $0 tfu5 productos
 
@@ -138,7 +130,7 @@ docker compose start "$TARGET" || echo "Warning: failed to start $TARGET"
 sleep 5
 run_round "after_restart"
 
-# 5) summary
+
 echo "Summary:"
 echo "- Branch: $BRANCH"
 echo "- Target stopped: $TARGET"
