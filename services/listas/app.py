@@ -52,17 +52,17 @@ def create_lista():
         return jsonify({'error': 'nombre is required'}), 400
     l = Lista(nombre=nombre)
     for pn in productos:
+        # Best-effort: try to ensure product exists in central productos service.
+        # On failure, degrade gracefully by creating/using a local product record.
         try:
             resp = requests.post(f"{PRODUCTOS_URL}/productos", json={"nombre": pn}, timeout=5)
+            if resp.status_code not in (200, 201, 409):
+                # unexpected response, log and continue with local product
+                import logging
+                logging.warning('productos service returned unexpected status %s for %s', resp.status_code, pn)
         except requests.RequestException:
-            return jsonify({'error': 'failed to reach productos service'}), 503
-
-        if resp.status_code == 201:
-            pass
-        elif resp.status_code == 409:
-            pass
-        else:
-            return jsonify({'error': 'productos service error', 'details': resp.text}), 502
+            import logging
+            logging.warning('productos service unreachable; proceeding with local product for %s', pn)
 
         p = Producto.query.filter_by(nombre=pn).first()
         if not p:
@@ -93,11 +93,12 @@ def update_lista(lid):
         for pn in productos:
             try:
                 resp = requests.post(f"{PRODUCTOS_URL}/productos", json={"nombre": pn}, timeout=5)
+                if resp.status_code not in (200, 201, 409):
+                    import logging
+                    logging.warning('productos service returned unexpected status %s for %s', resp.status_code, pn)
             except requests.RequestException:
-                return jsonify({'error': 'failed to reach productos service'}), 503
-
-            if resp.status_code not in (201, 409):
-                return jsonify({'error': 'productos service error', 'details': resp.text}), 502
+                import logging
+                logging.warning('productos service unreachable for %s; proceeding with local product', pn)
 
             p = Producto.query.filter_by(nombre=pn).first()
             if not p:
@@ -114,6 +115,11 @@ def delete_lista(lid):
     db.session.delete(l)
     db.session.commit()
     return jsonify({'result': 'deleted'})
+
+
+@app.route('/health')
+def health():
+    return jsonify({'status': 'ok'}), 200
 
 
 if __name__ == '__main__':

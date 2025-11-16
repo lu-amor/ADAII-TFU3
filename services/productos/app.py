@@ -83,6 +83,11 @@ def delete_producto(pid):
     return jsonify({'result': 'deleted'})
 
 
+@app.route('/health')
+def health():
+    return jsonify({'status': 'ok'}), 200
+
+
 if __name__ == '__main__':
     # Ensure tables exist before serving requests
     create_tables()

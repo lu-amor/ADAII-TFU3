@@ -58,22 +58,19 @@ def create_receta():
     r = Receta(nombre=nombre)
     # Ensure products exist in productos service; create if missing
     for pn in productos:
+        # Best-effort: try to ensure product exists in central productos service.
+        # On failure, degrade gracefully by creating/using a local product record.
+        fallback = False
         try:
-            # Try creating product in central productos service
             resp = requests.post(f"{PRODUCTOS_URL}/productos", json={"nombre": pn}, timeout=5)
+            if resp.status_code not in (200, 201, 409):
+                logging.warning('productos service returned unexpected status %s for %s', resp.status_code, pn)
+                fallback = True
         except requests.RequestException:
-            return jsonify({'error': 'failed to reach productos service'}), 503
+            logging.warning('productos service unreachable; falling back to local product for %s', pn)
+            fallback = True
 
-        if resp.status_code == 201:
-            # created, good
-            pass
-        elif resp.status_code == 409:
-            # already exists, that's fine
-            pass
-        else:
-            return jsonify({'error': 'productos service error', 'details': resp.text}), 502
-
-        # Keep a local Producto row for relationship convenience
+        # Keep or create a local Producto row for relationship convenience regardless
         p = Producto.query.filter_by(nombre=pn).first()
         if not p:
             p = Producto(nombre=pn)
@@ -154,10 +151,11 @@ def soap_create_receta():
     for pname in productos_list:
         try:
             p_resp = requests.post(f"{PRODUCTOS_URL}/productos", json={"nombre": pname}, timeout=5)
+            if p_resp.status_code not in (200, 201, 409):
+                logging.warning('productos service returned unexpected status %s for %s', p_resp.status_code, pname)
         except requests.RequestException:
-            return _soap_fault('Server', f'productos service unavailable for {pname}')
-        if p_resp.status_code not in (200, 201, 409):
-            return _soap_fault('Server', f'productos service error for {pname}: {p_resp.status_code}')
+            # degrade: create local product and continue
+            logging.warning('productos service unreachable for %s; proceeding with local product', pname)
 
     # create receta locally
     try:
@@ -232,6 +230,11 @@ def delete_receta(rid):
     db.session.delete(r)
     db.session.commit()
     return jsonify({'result': 'deleted'})
+
+
+@app.route('/health')
+def health():
+    return jsonify({'status': 'ok'}), 200
 
 
 if __name__ == '__main__':

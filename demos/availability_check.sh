@@ -10,8 +10,6 @@
 
 set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-RESULTS_DIR="$ROOT_DIR/demos/results"
-mkdir -p "$RESULTS_DIR"
 
 usage(){
   cat <<EOF
@@ -38,8 +36,6 @@ fi
 
 BRANCH="$1"
 TARGET="$2"
-TS=$(date -u +%Y%m%dT%H%M%SZ)
-OUT="$RESULTS_DIR/availability-${BRANCH}-${TARGET}-$TS.txt"
 
 echo "Running availability check for branch '$BRANCH' by stopping service '$TARGET'"
 
@@ -77,7 +73,7 @@ LISTAS_URL="http://localhost:8003"
 # Wait for gateway (or api root) to be ready
 echo "Waiting for gateway/api to be ready at $GATEWAY_URL..."
 if ! wait_for "$GATEWAY_URL/"; then
-  echo "Gateway did not become ready in time. Check containers with 'docker compose ps'" | tee "$OUT"
+  echo "Gateway did not become ready in time. Check containers with 'docker compose ps'" >&2
   exit 1
 fi
 
@@ -103,30 +99,30 @@ probe() {
 
 # endpoints to check
 ENDPOINTS=(
-  "gateway_root:$GATEWAY_URL/"
-  "productos:$PRODUCTOS_URL/productos/"
-  "recetas:$RECETAS_URL/recetas/"
-  "listas:$LISTAS_URL/listas/"
+  "gateway_root:$GATEWAY_URL/health"
+  "productos:$PRODUCTOS_URL/health"
+  "recetas:$RECETAS_URL/health"
+  "listas:$LISTAS_URL/health"
 )
 
 # Function to run round of probes and append header
 run_round() {
   local phase="$1"
-  echo "=== $phase ===" | tee -a "$OUT"
+  echo "=== $phase ==="
   for e in "${ENDPOINTS[@]}"; do
     IFS=":" read -r label url <<< "$e"
-    probe "$label" "$url" | tee -a "$OUT"
+    probe "$label" "$url"
   done
-  echo "" | tee -a "$OUT"
+  echo ""
 }
 
 # 1) initial probes
-echo "Running initial probes..." | tee "$OUT"
+echo "Running initial probes..."
 run_round "initial"
 
 # 2) stop target service
-echo "Stopping service: $TARGET" | tee -a "$OUT"
-docker compose stop "$TARGET" || echo "Warning: service $TARGET not found or already stopped" | tee -a "$OUT"
+echo "Stopping service: $TARGET"
+docker compose stop "$TARGET" || echo "Warning: service $TARGET not found or already stopped"
 
 # small wait to let things settle
 sleep 3
@@ -135,21 +131,17 @@ sleep 3
 run_round "after_stop"
 
 # 4) start target back up
-echo "Starting service: $TARGET" | tee -a "$OUT"
-docker compose start "$TARGET" || echo "Warning: failed to start $TARGET" | tee -a "$OUT"
+echo "Starting service: $TARGET"
+docker compose start "$TARGET" || echo "Warning: failed to start $TARGET"
 
 # wait a bit and final probe
 sleep 5
 run_round "after_restart"
 
 # 5) summary
-cat >> "$OUT" <<EOF
-Summary:
-- Branch: $BRANCH
-- Target stopped: $TARGET
-- Timestamp: $TS
-EOF
+echo "Summary:"
+echo "- Branch: $BRANCH"
+echo "- Target stopped: $TARGET"
+echo "- Timestamp: $(date -u +%Y%m%dT%H%M%SZ)"
 
-echo "Results saved to $OUT"
-
-echo "Done. You can inspect $OUT for the HTTP status codes observed." 
+echo "Done. Results were printed to stdout." 

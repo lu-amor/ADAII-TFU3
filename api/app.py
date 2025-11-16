@@ -4,6 +4,9 @@ import time
 import logging
 import xml.etree.ElementTree as ET
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
+import threading
 
 # Service URLs used by the gateway to call microservices
 SERVICE_URLS = {
@@ -13,6 +16,58 @@ SERVICE_URLS = {
 }
 
 app = Flask(__name__)
+
+# Resilience configuration (can be tuned via env)
+RETRY_TOTAL = int(os.environ.get('GATEWAY_RETRY_TOTAL', '3'))
+RETRY_BACKOFF = float(os.environ.get('GATEWAY_RETRY_BACKOFF', '0.3'))
+CB_THRESHOLD = int(os.environ.get('GATEWAY_CB_THRESHOLD', '5'))
+CB_COOLDOWN = int(os.environ.get('GATEWAY_CB_COOLDOWN', '30'))  # seconds
+
+
+# Create a requests.Session with retries
+def _create_session():
+    session = requests.Session()
+    retry = Retry(
+        total=RETRY_TOTAL,
+        backoff_factor=RETRY_BACKOFF,
+        status_forcelist=[429, 500, 502, 503, 504],
+        allowed_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"]
+    )
+    adapter = HTTPAdapter(max_retries=retry)
+    session.mount('http://', adapter)
+    session.mount('https://', adapter)
+    return session
+
+
+# Simple in-memory circuit-breaker state
+_cb_lock = threading.Lock()
+_cb_state = {name: {'failures': 0, 'until': 0} for name in SERVICE_URLS.keys()}
+
+
+def _is_open(name):
+    st = _cb_state.get(name)
+    if not st:
+        return False
+    return time.time() < st['until']
+
+
+def _record_failure(name):
+    with _cb_lock:
+        st = _cb_state.setdefault(name, {'failures': 0, 'until': 0})
+        st['failures'] += 1
+        if st['failures'] >= CB_THRESHOLD:
+            st['until'] = time.time() + CB_COOLDOWN
+
+
+def _record_success(name):
+    with _cb_lock:
+        st = _cb_state.setdefault(name, {'failures': 0, 'until': 0})
+        st['failures'] = 0
+        st['until'] = 0
+
+
+# shared session
+_session = _create_session()
 
 # Gateway does not use a local database. It acts as a facade to microservices.
 
@@ -28,6 +83,34 @@ def _soap_fault(faultcode, faultstring):
     string = ET.SubElement(fault, 'faultstring')
     string.text = faultstring
     return Response(ET.tostring(envelope, encoding='utf-8', xml_declaration=True), mimetype='text/xml')
+
+
+def call_service(method, service_name, path, timeout=None, **kwargs):
+    """Call a backend service using the shared session.
+
+    Returns the requests.Response on success.
+    Raises requests.RequestException on network/timeout errors.
+    Implements a tiny circuit-breaker to avoid hammering a down service.
+    """
+    base = SERVICE_URLS.get(service_name)
+    if not base:
+        raise requests.RequestException(f'Unknown service: {service_name}')
+
+    if _is_open(service_name):
+        raise requests.RequestException(f'service {service_name} marked as down')
+
+    url = base.rstrip('/') + path
+    try:
+        resp = _session.request(method, url, timeout=timeout, **kwargs)
+        # treat 5xx as failures for circuit purposes
+        if 500 <= resp.status_code < 600:
+            _record_failure(service_name)
+        else:
+            _record_success(service_name)
+        return resp
+    except requests.RequestException:
+        _record_failure(service_name)
+        raise
 
 
 @app.route('/soap/recetas', methods=['POST'])
@@ -87,7 +170,7 @@ def soap_recetas():
     # Ensure each product exists in the productos microservice (create if missing)
     for pname in productos_list:
         try:
-            p_resp = requests.post(f"{SERVICE_URLS['productos']}/productos", json={"nombre": pname}, timeout=5)
+            p_resp = call_service('POST', 'productos', '/productos', json={"nombre": pname}, timeout=5)
         except requests.RequestException:
             return _soap_fault('Server', f'productos service unavailable when creating {pname}')
 
@@ -96,11 +179,7 @@ def soap_recetas():
 
     # Now call the recetas microservice to create the receta using product names
         try:
-            r_resp = requests.post(
-                f"{SERVICE_URLS['recetas']}/recetas",
-                json={"nombre": receta_nombre, "productos": productos_list},
-                timeout=10,
-            )
+            r_resp = call_service('POST', 'recetas', '/recetas', json={"nombre": receta_nombre, "productos": productos_list}, timeout=10)
         except requests.RequestException:
             return _soap_fault('Server', 'recetas service unavailable')
 
@@ -141,15 +220,21 @@ def index():
     return jsonify({"msg": "API Recetas funcionando 🚀"})
 
 
+@app.route('/health')
+def health():
+    """Simple health endpoint used by compose and probes."""
+    return jsonify({'status': 'ok'}), 200
+
+
 # Lightweight proxy endpoints so the gateway can expose the microservices' REST APIs
 @app.route('/productos/', methods=['GET', 'POST'])
 def proxy_productos():
     target = SERVICE_URLS['productos'] + '/productos'
     try:
         if request.method == 'GET':
-            resp = requests.get(target, params=request.args, timeout=5)
+            resp = call_service('GET', 'productos', '/productos', params=request.args, timeout=5)
         else:
-            resp = requests.post(target, json=request.get_json(silent=True) or {}, timeout=5)
+            resp = call_service('POST', 'productos', '/productos', json=request.get_json(silent=True) or {}, timeout=5)
     except requests.RequestException:
         return jsonify({'error': 'productos service unavailable'}), 502
     return Response(resp.content, status=resp.status_code, content_type=resp.headers.get('Content-Type', 'application/json'))
@@ -160,9 +245,9 @@ def proxy_recetas():
     target = SERVICE_URLS['recetas'] + '/recetas'
     try:
         if request.method == 'GET':
-            resp = requests.get(target, params=request.args, timeout=5)
+            resp = call_service('GET', 'recetas', '/recetas', params=request.args, timeout=5)
         else:
-            resp = requests.post(target, json=request.get_json(silent=True) or {}, timeout=10)
+            resp = call_service('POST', 'recetas', '/recetas', json=request.get_json(silent=True) or {}, timeout=10)
     except requests.RequestException:
         return jsonify({'error': 'recetas service unavailable'}), 502
     return Response(resp.content, status=resp.status_code, content_type=resp.headers.get('Content-Type', 'application/json'))
@@ -173,9 +258,9 @@ def proxy_listas():
     target = SERVICE_URLS['listas'] + '/listas'
     try:
         if request.method == 'GET':
-            resp = requests.get(target, params=request.args, timeout=5)
+            resp = call_service('GET', 'listas', '/listas', params=request.args, timeout=5)
         else:
-            resp = requests.post(target, json=request.get_json(silent=True) or {}, timeout=5)
+            resp = call_service('POST', 'listas', '/listas', json=request.get_json(silent=True) or {}, timeout=5)
     except requests.RequestException:
         return jsonify({'error': 'listas service unavailable'}), 502
     return Response(resp.content, status=resp.status_code, content_type=resp.headers.get('Content-Type', 'application/json'))
